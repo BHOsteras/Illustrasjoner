@@ -1,0 +1,27 @@
+[project]
+name = "illustrasjoner"
+version = "0.1.0"
+description = "Manim-illustrasjoner til presentasjoner, med en felles visuell stil."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "manim>=0.19",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.10,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# Manim-scener bruker ofte `from manim import *`
+ignore = ["F403", "F405"]
