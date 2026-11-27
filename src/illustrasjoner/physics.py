@@ -1,141 +1,176 @@
 """Gjenbrukbare byggeklosser for fysikk-illustrasjoner.
 
 Inneholder faste farger for partikler (slik at et proton alltid ser likt ut
-på tvers av illustrasjoner), kinematikk for vekselvirkninger og
-tegnefunksjoner for atomkjerner og fotoner som bølgepakker.
+på tvers av illustrasjoner) og standardtegningen av fotoner som bølgepakker
+med E- og B-felt (se AGENTS.md).
+
+Fotoner tegnes i en fast ortografisk 3D-visning: x er forplantningsretningen,
+E-feltet ligger langs y og B-feltet langs z. Bølgemønsteret står i ro langs x;
+det er bare omhyllingskurven som vandrer (`photon_packet(center, ...)` med
+økende `center`).
 """
 
 from __future__ import annotations
 
-import math
-import random
-from dataclasses import dataclass
+from collections.abc import Callable
 
 import numpy as np
-from manim import Dot, VGroup, VMobject
+from manim import DEGREES, ORIGIN, Line, VGroup, VMobject, config
 
 from illustrasjoner.style import palette
-
-ELECTRON_REST_ENERGY_KEV = 510.99895
 
 PROTON_COLOR = palette.danger
 NEUTRON_COLOR = palette.muted
 ELECTRON_COLOR = palette.primary
 PHOTON_COLOR = palette.warning
 
+HC_KEV_PM = 1239.84198  # h·c i keV·pm
+
+
+def photon_wavelength_pm(energy_kev: float) -> float:
+    """Bølgelengde i pikometer for et foton med gitt energi (λ = hc/E)."""
+    return HC_KEV_PM / energy_kev
+
 
 # --------------------------------------------------------------------------- #
-# Kinematikk
+# Fotonstil
 # --------------------------------------------------------------------------- #
 
+E_FIELD_COLOR = PHOTON_COLOR
+B_FIELD_COLOR = palette.primary  # blå for B, som i vanlig lærebokkonvensjon
+ENVELOPE_COLOR = PHOTON_COLOR
+AXIS_COLOR = palette.muted
 
-@dataclass(frozen=True)
-class ComptonResult:
-    """Resultat av Compton-spredning mot et fritt elektron i ro."""
+CURVE_WIDTH = 2.0
+ENVELOPE_WIDTH = 1.0
+ENVELOPE_OPACITY = 0.45
+STEM_WIDTH = 0.75
+STEM_OPACITY = 0.3
+AXIS_WIDTH = 1.0
+AXIS_OPACITY = 0.5
 
-    incident_energy_kev: float  # E
-    scattered_energy_kev: float  # E'
-    electron_energy_kev: float  # T, kinetisk energi til rekylelektronet
-    photon_angle: float  # θ, spredningsvinkel for fotonet (radianer)
-    electron_angle: float  # φ, rekylvinkel for elektronet (radianer, motsatt side)
+PHOTON_SIGMA = 1.2  # bredde på omhyllingskurven (standardavvik)
+PHOTON_LENGTH_SIGMAS = 3.3  # pakken tegnes ±så mange sigma fra sentrum
+PHOTON_SPEED = 2.0  # "lysfarten" i bildet, enheter per sekund
 
-    @property
-    def wavelength_ratio(self) -> float:
-        """λ'/λ = E/E'."""
-        return self.incident_energy_kev / self.scattered_energy_kev
-
-    @property
-    def electron_beta(self) -> float:
-        """Rekylelektronets fart som andel av lysfarten, v/c."""
-        gamma = 1 + self.electron_energy_kev / ELECTRON_REST_ENERGY_KEV
-        return math.sqrt(1 - 1 / gamma**2)
+# Kamera: rotasjon om y (asimut) og deretter om x (høyde), ortografisk
+CAMERA_AZIMUTH = -25 * DEGREES
+CAMERA_ELEVATION = 20 * DEGREES
 
 
-def compton(energy_kev: float, theta: float) -> ComptonResult:
-    """Compton-kinematikk for et foton med energi `energy_kev` spredt vinkel `theta`.
+def view_matrix(azimuth: float = CAMERA_AZIMUTH, elevation: float = CAMERA_ELEVATION) -> np.ndarray:
+    a, e = azimuth, elevation
+    ry = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+    rx = np.array([[1, 0, 0], [0, np.cos(e), -np.sin(e)], [0, np.sin(e), np.cos(e)]])
+    return rx @ ry
 
-    E' = E / (1 + (E/mc²)(1 - cos θ))
-    cot φ = (1 + E/mc²) tan(θ/2)
+
+VIEW = view_matrix()
+
+
+def project(x: np.ndarray, y: np.ndarray, z: np.ndarray, origin: np.ndarray = ORIGIN) -> np.ndarray:
+    """3D-punkter (x = forplantning, y = E-retning, z = B-retning) til bildeplanet.
+
+    `origin` er en forskyvning i bildeplanet, f.eks. for å stable flere fotoner.
     """
-    eps = energy_kev / ELECTRON_REST_ENERGY_KEV
-    scattered = energy_kev / (1 + eps * (1 - math.cos(theta)))
-    phi = math.atan2(1.0, (1 + eps) * math.tan(theta / 2))
-    return ComptonResult(
-        incident_energy_kev=energy_kev,
-        scattered_energy_kev=scattered,
-        electron_energy_kev=energy_kev - scattered,
-        photon_angle=theta,
-        electron_angle=phi,
+    pts = np.column_stack([x, y, z]) @ VIEW.T
+    pts[:, 2] = 0
+    return pts + np.asarray(origin)
+
+
+def _polyline(points: np.ndarray, color: str, width: float, opacity: float = 1.0) -> VMobject:
+    curve = VMobject(stroke_color=color, stroke_width=width, stroke_opacity=opacity)
+    curve.set_points_as_corners(points)
+    return curve
+
+
+def photon_travel_range(sigma: float = PHOTON_SIGMA) -> tuple[float, float]:
+    """Start- og slutt-x for pakkesentrum, slik at pakken starter og slutter utenfor bildet."""
+    x_half = config.frame_width / 2 / VIEW[0, 0]
+    half = PHOTON_LENGTH_SIGMAS * sigma
+    return -x_half - half, x_half + half
+
+
+def photon_axis(x_start: float, x_end: float, origin: np.ndarray = ORIGIN) -> VMobject:
+    """Svak linje langs forplantningsaksen."""
+    xs = np.array([x_start, x_end])
+    return _polyline(
+        project(xs, np.zeros(2), np.zeros(2), origin), AXIS_COLOR, AXIS_WIDTH, AXIS_OPACITY
     )
 
 
-# --------------------------------------------------------------------------- #
-# Tegning
-# --------------------------------------------------------------------------- #
-
-
-def nucleus(protons: int, neutrons: int, radius: float, seed: int = 1) -> VGroup:
-    """Atomkjerne som en tettpakket klynge av protoner og nøytroner.
-
-    Nukleonene tegnes uten omriss slik at kjernen ser riktig ut også når
-    kameraet zoomer kraftig inn (strektykkelse skalerer med zoom).
-    """
-    n = protons + neutrons
-    # Heksagonalt gitter, velg de n punktene nærmest sentrum
-    lattice = [
-        np.array([i + 0.5 * j, j * math.sqrt(3) / 2, 0.0])
-        for i in range(-6, 7)
-        for j in range(-6, 7)
-    ]
-    lattice.sort(key=lambda p: (round(float(np.linalg.norm(p)), 6), math.atan2(p[1], p[0])))
-    points = lattice[:n]
-    points_center = np.mean(points, axis=0)
-    points = [p - points_center for p in points]
-    extent = max(float(np.linalg.norm(p)) for p in points) + 0.5
-    scale = radius / extent
-
-    kinds = ["p"] * protons + ["n"] * neutrons
-    random.Random(seed).shuffle(kinds)
-
-    nucleons = VGroup()
-    for p, kind in zip(points, kinds, strict=True):
-        color = PROTON_COLOR if kind == "p" else NEUTRON_COLOR
-        ball = Dot(p * scale, radius=0.5 * scale * 0.96, color=color)
-        highlight = Dot(
-            p * scale + np.array([-0.15, 0.15, 0]) * scale,
-            radius=0.18 * scale,
-            color="#FFFFFF",
-            fill_opacity=0.35,
-        )
-        nucleons.add(VGroup(ball, highlight))
-    return nucleons
-
-
-def wave_packet(
+def photon_packet(
     center: float,
     wavelength: float,
-    sigma: float,
-    amplitude: float = 0.25,
-    s_min: float = -math.inf,
-    s_max: float = math.inf,
-    samples_per_wavelength: int = 40,
-) -> VMobject:
-    """Foton som en gaussisk bølgepakke langs x-aksen.
+    sigma: float = PHOTON_SIGMA,
+    amplitude: float = 1.4,
+    origin: np.ndarray = ORIGIN,
+    stems_per_wavelength: int = 6,
+    samples_per_wavelength: int = 60,
+) -> VGroup:
+    """Foton som bølgepakke med E-felt (gult, langs y) og B-felt (blått, langs z).
 
-    `center` er pakkens sentrum langs aksen. Bare delen med s i
-    [s_min, s_max] tegnes, slik at pakken kan "renne inn i" eller "ut av"
-    et vekselvirkningspunkt. Roter/flytt resultatet for å plassere det.
-    Bølgen forskyves stivt med pakken (ingen dispersjon i vakuum).
+    `center` er pakkens sentrum langs x. Bølgemønsteret er fast i rommet
+    (sin(2πx/λ)); bare den gaussiske omhyllingskurven flytter seg med `center`.
+    E og B er i fase. Hvert felt har en kantlinje (±omhylling) i sitt plan.
+    `stems_per_wavelength = 0` slår av de tynne feltstrekene.
     """
-    half = 2.5 * sigma
-    lo = max(center - half, s_min)
-    hi = min(center + half, s_max)
-    curve = VMobject()
-    if hi - lo < 1e-3:
-        return curve
-    n = max(2, int((hi - lo) / wavelength * samples_per_wavelength))
-    s = np.linspace(lo, hi, n)
-    u = s - center
-    y = amplitude * np.exp(-((u / sigma) ** 2)) * np.sin(2 * math.pi * u / wavelength)
-    curve.set_points_as_corners(np.column_stack([s, y, np.zeros_like(s)]))
-    return curve
+    half = PHOTON_LENGTH_SIGMAS * sigma
+    n = max(2, int(2 * half / wavelength * samples_per_wavelength))
+    u = np.linspace(-half, half, n)
+    x = center + u
+    env = amplitude * np.exp(-0.5 * (u / sigma) ** 2)
+    wave = env * np.sin(2 * np.pi * x / wavelength)
+
+    parts = VGroup()
+    # B først, slik at E ligger oppå
+    for color, in_y in ((B_FIELD_COLOR, False), (E_FIELD_COLOR, True)):
+
+        def pts(v: np.ndarray, xs: np.ndarray, in_y: bool = in_y) -> np.ndarray:
+            z0 = np.zeros_like(xs)
+            return project(xs, v, z0, origin) if in_y else project(xs, z0, v, origin)
+
+        for sign in (1, -1):
+            envelope = _polyline(
+                pts(sign * env, x), ENVELOPE_COLOR, ENVELOPE_WIDTH, ENVELOPE_OPACITY
+            )
+            parts.add(envelope)
+
+        if stems_per_wavelength:
+            # Fast avstand i rommet, slik at strekene ikke "glir" med pakken
+            spacing = wavelength / stems_per_wavelength
+            xs = np.arange(np.ceil(x[0] / spacing), np.floor(x[-1] / spacing) + 1) * spacing
+            vs = amplitude * np.exp(-0.5 * ((xs - center) / sigma) ** 2)
+            vs *= np.sin(2 * np.pi * xs / wavelength)
+            base = project(xs, np.zeros_like(xs), np.zeros_like(xs), origin)
+            for b, t in zip(base, pts(vs, xs), strict=True):
+                if np.linalg.norm(t - b) > 0.03:
+                    parts.add(
+                        Line(
+                            b,
+                            t,
+                            stroke_color=color,
+                            stroke_width=STEM_WIDTH,
+                            stroke_opacity=STEM_OPACITY,
+                        )
+                    )
+
+        parts.add(_polyline(pts(wave, x), color, CURVE_WIDTH))
+    return parts
+
+
+def moving_photon(center_of: Callable[[], float], **packet_kwargs) -> VGroup:
+    """Foton som tegnes på nytt hvert bilde med sentrum `center_of()`.
+
+    Bygger pakken helt på nytt i stedet for `always_redraw`/`become`, som kan gi
+    løse streker når antall delobjekter endrer seg fra bilde til bilde.
+    Eksempel: `moving_photon(lambda: x0 + v * t.get_value(), wavelength=0.9)`.
+    """
+    holder = VGroup()
+
+    def rebuild(group: VGroup) -> None:
+        group.submobjects = [photon_packet(center_of(), **packet_kwargs)]
+
+    rebuild(holder)
+    holder.add_updater(rebuild)
+    return holder

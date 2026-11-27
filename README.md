@@ -30,7 +30,7 @@ sudo dnf install texlive-scheme-basic texlive-standalone tex-preview \
 
 ```
 src/illustrasjoner/style.py   felles stil: palett, fonter, StyledScene, hjelpefunksjoner
-src/illustrasjoner/physics.py partikkelfarger, kinematikk (Compton), atomkjerne, bølgepakke
+src/illustrasjoner/physics.py partikkelfarger og standardtegning av fotoner
 scenes/                       én fil per illustrasjon (eller tema)
 manim.cfg                     render-innstillinger (oppløsning, fps, output-mappe)
 media/                        generert output (ignoreres av git)
@@ -41,25 +41,29 @@ media/                        generert output (ignoreres av git)
 1. Lag `scenes/<navn>.py`.
 2. Arv fra `StyledScene` og bruk fargene fra `palette` (roller som `palette.primary`,
    ikke hex-koder), slik at alt holder samme stil.
+3. Følg stilreglene i `AGENTS.md` (bl.a. ingen tekst eller likninger som standard).
 
 ```python
 from manim import *
-from illustrasjoner import StyledScene, palette, title
+from illustrasjoner import StyledScene, palette
 
 
 class MinIllustrasjon(StyledScene):
     def construct(self):
-        self.play(Write(title("Overskrift")))
+        self.play(Create(Circle(radius=1.5, color=palette.primary)))
 ```
 
 ## Rendering
 
 ```bash
-uv run manim -pql scenes/hello_world.py HelloWorld   # rask forhåndsvisning (480p)
-uv run manim -pqh scenes/hello_world.py HelloWorld   # full kvalitet (1080p)
-uv run manim -s   scenes/hello_world.py HelloWorld   # bare siste bilde som PNG
-uv run manim -qh --transparent scenes/...            # gjennomsiktig bakgrunn (.mov)
+uv run manim -pql scenes/foton.py Foton            # rask forhåndsvisning (480p)
+uv run manim -pqh scenes/foton.py Foton            # full kvalitet (1080p)
+uv run manim -s   scenes/foton.py Foton            # bare siste bilde som PNG
+uv run manim -qh --transparent scenes/...          # gjennomsiktig bakgrunn (.mov)
+uv run manim -pqh scenes/foton.py Foton -o navn    # velg navn på utfila
 ```
+
+Det siste argumentet er navnet på scene-klassen i fila, ikke navnet på utfila.
 
 Output havner i `media/videos/<fil>/<kvalitet>/`.
 
